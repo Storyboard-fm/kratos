@@ -137,7 +137,7 @@ type Session struct {
 	// The Session Token
 	//
 	// The token of this session.
-	Token string    `json:"-" db:"token"`
+	Token string    `json:"token" db:"token"`
 	NID   uuid.UUID `json:"-"  faker:"-" db:"nid"`
 }
 
