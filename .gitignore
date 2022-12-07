@@ -19,6 +19,7 @@ goroutine_dump/
 inflight_trace_dump/
 
 .vscode
+.history
 
 e2e/*.log
 e2e/kratos.*.yml
