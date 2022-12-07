@@ -405,6 +405,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, _ httprouter.Pa
 		return
 	}
 
+	// ct := CredentialsTypePassword
+
+	// s, err := session.NewActiveSession(r, i, h.r.Config(), time.Now().UTC(), ct, AuthenticatorAssuranceLevel1)
+
+	// if err := s.persister.UpsertSession(r.Context(), s); err != nil {
+	// 	return err
+	// }
+
 	h.r.Writer().WriteCreated(w, r,
 		urlx.AppendPaths(
 			h.r.Config().SelfAdminURL(r.Context()),

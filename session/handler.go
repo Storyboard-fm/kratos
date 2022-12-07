@@ -25,6 +25,7 @@ import (
 	"github.com/ory/herodot"
 
 	"github.com/ory/kratos/driver/config"
+	"github.com/ory/kratos/identity"
 	"github.com/ory/kratos/x"
 )
 
@@ -32,6 +33,7 @@ type (
 	handlerDependencies interface {
 		ManagementProvider
 		PersistenceProvider
+		identity.PrivilegedPoolProvider
 		x.WriterProvider
 		x.LoggingProvider
 		x.CSRFProvider
@@ -62,9 +64,10 @@ const (
 )
 
 const (
-	AdminRouteIdentity           = "/identities"
-	AdminRouteIdentitiesSessions = AdminRouteIdentity + "/:id/sessions"
-	AdminRouteSessionExtendId    = RouteSession + "/extend"
+	AdminRouteIdentity                = "/identities"
+	AdminRouteIdentitiesSessions      = AdminRouteIdentity + "/:id/sessions"
+	AdminRouteIdentitiesCreateSession = AdminRouteIdentity + "/:id/session"
+	AdminRouteSessionExtendId         = RouteSession + "/extend"
 )
 
 func (h *Handler) RegisterAdminRoutes(admin *x.RouterAdmin) {
@@ -74,6 +77,7 @@ func (h *Handler) RegisterAdminRoutes(admin *x.RouterAdmin) {
 
 	admin.GET(AdminRouteIdentitiesSessions, h.listIdentitySessions)
 	admin.DELETE(AdminRouteIdentitiesSessions, h.deleteIdentitySessions)
+	admin.POST(AdminRouteIdentitiesCreateSession, h.createIdentitySession)
 	admin.PATCH(AdminRouteSessionExtendId, h.adminSessionExtend)
 
 	admin.DELETE(RouteCollection, x.RedirectToPublicRoute(h.r))
@@ -551,6 +555,12 @@ func (h *Handler) listIdentitySessions(w http.ResponseWriter, r *http.Request, p
 		active = &activeBool
 	}
 
+	i, err := h.r.PrivilegedIdentityPool().GetIdentityConfidential(r.Context(), x.ParseUUID(ps.ByName("id")))
+	if err != nil {
+		h.r.Writer().WriteError(w, r, err)
+		return
+	}
+
 	page, perPage := x.ParsePagination(r)
 	sess, total, err := h.r.SessionPersister().ListSessionsByIdentity(r.Context(), iID, active, page, perPage, uuid.Nil, ExpandEverything)
 	if err != nil {
@@ -558,8 +568,96 @@ func (h *Handler) listIdentitySessions(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
+	if total < 1 {
+		print("No sessions found for identity, creating a new one")
+		ct := identity.CredentialsTypePassword
+
+		s, err := NewActiveSession(r, i, h.r.Config(), time.Now().UTC(), ct, identity.AuthenticatorAssuranceLevel1)
+		if err != nil {
+			h.r.Writer().WriteError(w, r, err)
+			return
+		}
+
+		if err := h.r.SessionPersister().UpsertSession(r.Context(), s); err != nil {
+			h.r.Writer().WriteError(w, r, err)
+			return
+		}
+		sess = append(sess, s)
+		total = 1
+	}
+
 	x.PaginationHeader(w, urlx.AppendPaths(h.r.Config().SelfAdminURL(r.Context()), RouteCollection), total, page, perPage)
 	h.r.Writer().Write(w, r, sess)
+}
+
+// Create Identity Session Parameters
+//
+// swagger:parameters createIdentitySession
+// nolint:deadcode,unused
+type createIdentitySessionRequest struct {
+	migrationpagination.RequestParameters
+
+	// ID is the identity's ID.
+	//
+	// required: true
+	// in: path
+	ID string `json:"id"`
+}
+
+// Create Identity Session Response
+//
+// swagger:response createIdentitySession
+// nolint:deadcode,unused
+type createIdentitySessionResponse struct {
+	migrationpagination.ResponseHeaderAnnotation
+
+	// in: body
+	Body Session
+}
+
+// swagger:route POST /admin/identities/{id}/session identity createIdentitySession
+//
+// # Create a Session for an Identity
+//
+// This endpoint creates a new session for the given Identity.
+//
+//	Schemes: http, https
+//
+//	Security:
+//	  oryAccessToken:
+//
+//	Responses:
+//	  200: createIdentitySession
+//	  400: errorGeneric
+//	  404: errorGeneric
+//	  default: errorGeneric
+func (h *Handler) createIdentitySession(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	iID, err := uuid.FromString(ps.ByName("id"))
+	if err != nil {
+		h.r.Writer().WriteError(w, r, errors.WithStack(herodot.ErrBadRequest.WithError(err.Error()).WithDebug("could not parse UUID")))
+		return
+	}
+
+	i, err := h.r.PrivilegedIdentityPool().GetIdentityConfidential(r.Context(), iID)
+	if err != nil {
+		h.r.Writer().WriteError(w, r, err)
+		return
+	}
+
+	ct := identity.CredentialsTypePassword
+
+	s, err := NewActiveSession(r, i, h.r.Config(), time.Now().UTC(), ct, identity.AuthenticatorAssuranceLevel1)
+	if err != nil {
+		h.r.Writer().WriteError(w, r, err)
+		return
+	}
+
+	if err := h.r.SessionPersister().UpsertSession(r.Context(), s); err != nil {
+		h.r.Writer().WriteError(w, r, err)
+		return
+	}
+
+	h.r.Writer().Write(w, r, s)
 }
 
 // Deleted Session Count
